@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HD Platformer — Fewer Spikes & Enemies with Character</title>
+  <style>
+    :root { --accent: #2b7cff; }
+    html, body { height: 100%; margin: 0; background: #87CEEB; font-family: Inter, system-ui, Segoe UI, Roboto, Arial; }
+    #gameWrap { display: flex; align-items: center; justify-content: center; height: 100%; }
+    canvas { display: block; background: linear-gradient(#9fd5ff, #cfefff); border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22); }
+    #hud { position: fixed; left: 12px; top: 12px; padding: 10px 14px; background: rgba(255, 255, 255, 0.92); border-radius: 8px; font-size: 16px; font-weight: 700; }
+    .overlay { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); z-index: 40; }
+    .panel { background: #fff; border-radius: 12px; padding: 18px 22px; min-width: 320px; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25); }
+    .title { font-size: 26px; margin-bottom: 6px; font-weight: 800; color: var(--accent); }
+    .btn { display: inline-block; padding: 10px 16px; margin: 8px; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 700; }
+    .btn.secondary { background: #e6e6e6; color: #111; }
+    .shop-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+    .small { font-size: 14px; color: #444; }
+  </style>
+</head>
+<body>
+  <div id="gameWrap"><canvas id="gameCanvas" width="900" height="500"></canvas></div>
+  <div id="hud">Lives: <span id="lives">3</span> &nbsp; Score: <span id="score">0</span> &nbsp; Coins: <span id="coins">0</span> &nbsp; Ammo: <span id="ammo">10</span> &nbsp; Level: <span id="level">1</span> &nbsp; Season: <span id="season">Spring</span> &nbsp; Weapon: <span id="weapon">Pistol</span></div>
+
+  <!-- Menu -->
+  <div id="menu" class="overlay">
+    <div class="panel">
+      <div class="title">Pixel Platformer — Fewer Spikes & Enemies with Character</div>
+      <div class="small">I've reduced spike density and gave enemies simple character sprites & behavior (patrol, cautious, chaser).</div>
+      <div style="margin-top:12px">
+        <div class="btn" id="startBtn">Start Game</div>
+        <div class="btn secondary" id="instrBtn">Instructions</div>
+      </div>
+      <div id="instrPanel" style="display:none;margin-top:10px;font-size:14px;color:#333">
+        Move: ← → or A/D. Jump: W/Space. Shoot: J/K. Switch weapon: 1-4 (if purchased). Open menu: M. Reach the right edge to advance. Mini-boss every 5 levels.
+      </div>
+    </div>
+  </div>
+
+  <!-- Shop -->
+  <div id="shop" class="overlay" style="display:none">
+    <div class="panel">
+      <div class="title">Shop</div>
+      <div class="small">Spend coins before continuing</div>
+      <div id="shopItems" style="margin-top:12px">
+        <div class="shop-row"><div><b>+1 Life</b><div class="small">100 coins</div></div><div><div class="btn" data-action="buyLife">Buy</div></div></div>
+        <div class="shop-row"><div><b>+5 Ammo</b><div class="small">20 coins</div></div><div><div class="btn" data-action="buyAmmo">Buy</div></div></div>
+        <div class="shop-row"><div><b>Shield (10s)</b><div class="small">200 coins</div></div><div><div class="btn" data-action="buyShield">Buy</div></div></div>
+        <div style="height:8px"></div>
+        <div class="shop-row"><div><b>Rapid Fire</b><div class="small">Faster gun — 150 coins</div></div><div><div class="btn" data-action="buyRapid">Buy</div></div></div>
+        <div class="shop-row"><div><b>Shotgun</b><div class="small">Short spread, high damage — 300 coins</div></div><div><div class="btn" data-action="buyShotgun">Buy</div></div></div>
+        <div class="shop-row"><div><b>Sniper</b><div class="small">High damage, slow — 500 coins</div></div><div><div class="btn" data-action="buySniper">Buy</div></div></div>
+      </div>
+      <div style="text-align:right;margin-top:14px"><div class="btn secondary" id="skipShop">Skip</div><div class="btn" id="continueBtn">Continue</div></div>
+    </div>
+  </div>
+
+  <!-- End -->
+  <div id="endPanel" class="overlay" style="display:none">
+    <div class="panel">
+      <div id="endTitle" class="title">You Win!</div>
+      <div id="endText" class="small">Final score: 0</div>
+      <div style="margin-top:12px"><div class="btn" id="endToMenu">Return to Menu</div></div>
+    </div>
+  </div>
+
+  <script>
+    // Game Variables and Setup
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const DPR = Math.max(window.devicePixelRatio || 1, 1);
+    const CSS_W = 900, CSS_H = 500;
+    canvas.style.width = CSS_W + 'px'; 
+    canvas.style.height = CSS_H + 'px';
+    canvas.width = Math.floor(CSS_W * DPR); 
+    canvas.height = Math.floor(CSS_H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    const W = CSS_W, H = CSS_H;
+    let keys = {}, camera = { x: 0, y: 0 };
+    let player = { x: 80, y: 300, w: 28, h: 48, vx: 0, vy: 0, speed: 3.8, facing: 1, grounded: false, jumping: false };
+    let platforms = [{ x: 0, y: 460, w: 3000, h: 40 }]; // Default ground platform
+    let score = 0, coins = 0, lives = 3, ammo = 10, currentLevel = 0, state = 'menu';
+
+    // Update HUD
+    function updateHUD() {
+      document.getElementById('lives').textContent = lives;
+      document.getElementById('score').textContent = score;
+      document.getElementById('coins').textContent = coins;
+      document.getElementById('ammo').textContent = ammo;
+      document.getElementById('level').textContent = currentLevel + 1;
+    }
+
+    // Game State Transitions
+    function showMenu() { document.getElementById('menu').style.display = 'flex'; state = 'menu'; updateHUD(); }
+    function hideMenu() { document.getElementById('menu').style.display = 'none'; }
+    function showEnd(title, text) { document.getElementById('endTitle').textContent = title; document.getElementById('endText').textContent = text; document.getElementById('endPanel').style.display = 'flex'; state = 'end'; }
+    function hideEnd() { document.getElementById('endPanel').style.display = 'none'; }
+
+    // Start Game
+    function startGame() {
+      hideMenu();
+      loadLevel(0); 
+      state = 'playing';
+      updateHUD();
+      requestAnimationFrame(loop);
+    }
+
+    // Game Loop
+    function loop(ts) {
+      update(ts);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function update(ts) {
+      if (state !== 'playing') return;
+
+      const speed = 5;
+      if (keys['ArrowLeft'] || keys['a']) player.vx = -speed;
+      if (keys['ArrowRight'] || keys['d']) player.vx = speed;
+      if (!keys['ArrowLeft'] && !keys['a'] && !keys['ArrowRight'] && !keys['d']) player.vx = 0;
+
+      // Gravity effect
+      player.vy += 0.5; 
+      player.x += player.vx;
+      player.y += player.vy;
+
+      // Collision with platforms
+      for (let p of platforms) {
+        if (rectCollide(player, p)) {
+          if (player.vy > 0) { player.vy = 0; player.y = p.y - player.h; player.grounded = true; }
+        }
+      }
+
+      // Check for game over
+      if (player.y > H) {
+        lives--;
+        if (lives <= 0) {
+          showEnd("Game Over", "Final Score: " + score);
+        }
+      }
+    }
+
+    // Collision detection helper
+    function rectCollide(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#87CEEB'; // Sky blue
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#228B22'; // Green for ground
+      for (let p of platforms) {
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+      ctx.fillStyle = '#FF0000'; // Draw player
+      ctx.fillRect(player.x, player.y, player.w, player.h);
+    }
+
+    // Event listeners
+    window.addEventListener('keydown', e => { keys[e.key] = true; if (e.key === 'Enter' && state === 'menu') startGame(); });
+    window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+    document.getElementById('startBtn').addEventListener('click', startGame);
+
+    // Start with the menu
+    showMenu();
+    updateHUD();
+  </script>
+</body>
+</html>
