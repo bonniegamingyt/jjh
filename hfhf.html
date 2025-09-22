@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>HD Platformer — Fewer Spikes & Enemies with Character</title>
+<style>
+  :root{--accent:#2b7cff}
+  html,body{height:100%;margin:0;background:#87CEEB;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+  #gameWrap{display:flex;align-items:center;justify-content:center;height:100%}
+  canvas{display:block;background:linear-gradient(#9fd5ff,#cfefff);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.22)}
+  #hud{position:fixed;left:12px;top:12px;padding:10px 14px;background:rgba(255,255,255,0.92);border-radius:8px;font-size:16px;font-weight:700}
+  .overlay{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:40}
+  .panel{background:#fff;border-radius:12px;padding:18px 22px;min-width:320px;box-shadow:0 8px 40px rgba(0,0,0,0.25)}
+  .title{font-size:26px;margin-bottom:6px;font-weight:800;color:var(--accent)}
+  .btn{display:inline-block;padding:10px 16px;margin:8px;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;font-weight:700}
+  .btn.secondary{background:#e6e6e6;color:#111}
+  .shop-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #eee}
+  .small{font-size:14px;color:#444}
+</style>
+</head>
+<body>
+<div id="gameWrap"><canvas id="gameCanvas" width="900" height="500"></canvas></div>
+<div id="hud">Lives: <span id="lives">3</span> &nbsp; Score: <span id="score">0</span> &nbsp; Coins: <span id="coins">0</span> &nbsp; Ammo: <span id="ammo">10</span> &nbsp; Level: <span id="level">1</span> &nbsp; Season: <span id="season">Spring</span> &nbsp; Weapon: <span id="weapon">Pistol</span></div>
+
+<!-- Menu -->
+<div id="menu" class="overlay">
+  <div class="panel">
+    <div class="title">Pixel Platformer — Fewer Spikes & Enemies with Character</div>
+    <div class="small">I've reduced spike density and gave enemies simple character sprites & behavior (patrol, cautious, chaser).</div>
+    <div style="margin-top:12px">
+      <div class="btn" id="startBtn">Start Game</div>
+      <div class="btn secondary" id="instrBtn">Instructions</div>
+    </div>
+    <div id="instrPanel" style="display:none;margin-top:10px;font-size:14px;color:#333">
+      Move: ← → or A/D. Jump: W/Space. Shoot: J/K. Switch weapon: 1-4 (if purchased). Open menu: M. Reach the right edge to advance. Mini-boss every 5 levels.
+    </div>
+  </div>
+</div>
+
+<!-- Shop -->
+<div id="shop" class="overlay" style="display:none">
+  <div class="panel">
+    <div class="title">Shop</div>
+    <div class="small">Spend coins before continuing</div>
+    <div id="shopItems" style="margin-top:12px">
+      <div class="shop-row"><div><b>+1 Life</b><div class="small">100 coins</div></div><div><div class="btn" data-action="buyLife">Buy</div></div></div>
+      <div class="shop-row"><div><b>+5 Ammo</b><div class="small">20 coins</div></div><div><div class="btn" data-action="buyAmmo">Buy</div></div></div>
+      <div class="shop-row"><div><b>Shield (10s)</b><div class="small">200 coins</div></div><div><div class="btn" data-action="buyShield">Buy</div></div></div>
+      <div style="height:8px"></div>
+      <div class="shop-row"><div><b>Rapid Fire</b><div class="small">Faster gun — 150 coins</div></div><div><div class="btn" data-action="buyRapid">Buy</div></div></div>
+      <div class="shop-row"><div><b>Shotgun</b><div class="small">Short spread, high damage — 300 coins</div></div><div><div class="btn" data-action="buyShotgun">Buy</div></div></div>
+      <div class="shop-row"><div><b>Sniper</b><div class="small">High damage, slow — 500 coins</div></div><div><div class="btn" data-action="buySniper">Buy</div></div></div>
+    </div>
+    <div style="text-align:right;margin-top:14px"><div class="btn secondary" id="skipShop">Skip</div><div class="btn" id="continueBtn">Continue</div></div>
+  </div>
+</div>
+
+<!-- End -->
+<div id="endPanel" class="overlay" style="display:none">
+  <div class="panel">
+    <div id="endTitle" class="title">You Win!</div>
+    <div id="endText" class="small">Final score: 0</div>
+    <div style="margin-top:12px"><div class="btn" id="endToMenu">Return to Menu</div></div>
+  </div>
+</div>
+
+<script>
+// Platformer tweak: fewer spikes and enemies with character sprites/behavior
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const DPR = Math.max(window.devicePixelRatio || 1, 1);
+const CSS_W = 900, CSS_H = 500;
+canvas.style.width = CSS_W + 'px'; 
+canvas.style.height = CSS_H + 'px';
+canvas.width = Math.floor(CSS_W * DPR); 
+canvas.height = Math.floor(CSS_H * DPR);
+ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+const W = CSS_W, H = CSS_H; 
+const WORLD_WIDTH = 3000; 
+const LEVEL_END_X = WORLD_WIDTH - 180;
+let keys = {}, camera = {x:0,y:0};
+let gravity = 0.85, friction = 0.9;
+let player = null, platforms = [], collectibles = [], bullets = [], spikes = [], questionBlocks = [], enemies = [], items = [], particles = [], decor = [];
+let boss = null, miniBoss = null, bossProjectiles = [];
+let score = 0, coins = 0, lives = 3, ammo = 10, lastShot = 0, shootCooldown = 350;
+let invulnerable = false, invulnEnd = 0, shieldEnd = 0;
+let currentLevel = 0, showingLevelTitle = false; let state = 'menu';
+const UI_FONT = '18px Inter, Arial', BIG_FONT = '26px Inter, Arial';
+
+const seasons = ['Spring','Summer','Autumn','Winter'];
+let currentSeason = 'Spring';
+
+// particle cap
+const PARTICLE_LIMIT = 1600;
+function clampParticles(){ if(particles.length > PARTICLE_LIMIT) particles.splice(0, particles.length - PARTICLE_LIMIT); }
+
+// weapons
+const WEAPONS = {
+  pistol: {name:'Pistol', cooldown:350, ammoCost:1, damage:1, pellets:1, price:0},
+  rapid: {name:'Rapid', cooldown:150, ammoCost:1, damage:1, pellets:1, price:150},
+  shotgun: {name:'Shotgun', cooldown:700, ammoCost:2, damage:2, pellets:5, price:300},
+  sniper: {name:'Sniper', cooldown:1200, ammoCost:3, damage:6, pellets:1, price:500}
+};
+let ownedWeapons = { pistol:true };
+let currentWeapon = 'pistol';
+
+// ----- level generator: fewer spikes -----
+function generateDeterministicLevels(count){
+  const out = [];
+  for(let n=0;n<count;n++){
+    const WORLD = WORLD_WIDTH;
+    const plats = [{x:0,y:460,w:WORLD,h:40}];
+    const platformCount = 12;
+    for(let p=0;p<platformCount;p++){
+      const baseX = 80 + p * Math.floor((WORLD-300)/platformCount);
+      const wobble = ((p * 53 + n * 21) % 220) - 110;
+      const y = 260 + (p % 4) * -40 + Math.floor(wobble/5);
+      const w = 80 + ((p*29 + n*11) % 200);
+      plats.push({x: baseX + ((n*p)%120), y: Math.max(120, Math.min(420, y)), w: Math.max(60, Math.min(360, w)), h:20});
+    }
+    for(let f=0; f<6; f++){
+      const fx = 300 + ((f*131 + n*47) % (WORLD-600));
+      const fy = 180 + ((f*83 + n*19) % 220);
+      plats.push({x:fx,y:fy,w:40 + ((f*29+n)%80),h:16});
+    }
+
+    // REDUCED spikes: fewer clusters and singles (easier)
+    const spikesArr = [];
+    const clusterCount = Math.max(2, 3 + Math.floor((n%6)/4)); // generally 2-4 clusters
+    for(let c=0;c<clusterCount;c++){
+      const centerX = 300 + ((c*197 + n*71) % (WORLD - 800));
+      const clusterSize = 1 + (c % 3); // small clusters
+      for(let i=0;i<clusterSize;i++){
+        const sx = centerX + (i * (18 + (i%2)*6));
+        spikesArr.push({x: sx, y: 452, w: 16 + ((i*7 + n)%18), h:12});
+      }
+    }
+    // fewer solitary spikes
+    for(let s=0; s<4; s++){
+      const sx = 200 + ((s*89 + n*31) % (WORLD-300));
+      spikesArr.push({x: sx, y: 452, w: 14 + ((s*11+n)%20), h:12});
+    }
+
+    // question blocks
+    const qbs = [];
+    for(let q=0;q<Math.min(5,1+Math.floor(n/6)); q++){
+      const qx = 220 + ((q*151 + n*29) % (WORLD-500));
+      const qy = 160 + ((q*47 + n*11) % 220);
+      qbs.push({x: qx, y: qy, w:32, h:32, used:false});
+    }
+
+    // collectibles
+    const cols = [];
+    for(let c=0;c<8;c++){ const cx = 180 + ((c*71 + n*19) % (WORLD-300)); const cy = 160 + ((c*37 + n*23) % 300); cols.push({x:cx,y:cy,r:8}); }
+
+    // enemies with types for character
+    const enem = [];
+    for(let e=0;e<Math.min(5, 1 + Math.floor(n/6)); e++){
+      const ex = 400 + ((e*137 + n*71) % (WORLD-600)); const ey = 420 - ((e%3)*20);
+      const hp = 2 + Math.floor((n+1)/6) + (e%2);
+      // assign a personality type: patrol, cautious, chaser
+      const types = ['patrol','cautious','chaser'];
+      const type = types[e % types.length];
+      enem.push({x:ex,y:ey,w:36,h:40,vx: (type==='patrol'?1.0:0.6),range:[Math.max(200,ex-160), Math.min(WORLD-100, ex+160)],hp:hp,maxHp:hp,type:type,color: type==='patrol' ? '#b23333' : type==='cautious' ? '#337ab2' : '#3ab24a'});
+    }
+
+    out.push({platforms: plats, collectibles: cols, questionBlocks: qbs, spikes: spikesArr, enemies: enem});
+  }
+  return out;
+}
+
+let detailedLevels = generateDeterministicLevels(30);
+
+// castle: remove some spikes and keep interesting platform layout
+const castleStart = detailedLevels.length - 3;
+for(let i=0;i<3;i++){
+  const lvlIndex = castleStart + i;
+  detailedLevels[lvlIndex].platforms = [ {x:0,y:460,w:WORLD_WIDTH,h:40}, {x:1000,y:380,w:220,h:20}, {x:1250,y:340,w:160,h:20}, {x:1500,y:320,w:220,h:20}, {x:1800,y:360,w:260,h:20}, {x:2100,y:300,w:300,h:20}, {x:2400,y:340,w:220,h:20}, {x:2000,y:240,w:120,h:18}, {x:2200,y:200,w:120,h:18}, {x:1400,y:220,w:100,h:18} ];
+  // fewer castle spikes: just a few hazards instead of rows
+  detailedLevels[lvlIndex].spikes = [ {x:1300,y:452,w:30,h:12}, {x:1950,y:452,w:36,h:12}, {x:2300,y:452,w:40,h:12} ];
+  detailedLevels[lvlIndex].questionBlocks = [ {x:1180,y:320,w:32,h:32,used:false}, {x:2020,y:260,w:32,h:32,used:false} ];
+  detailedLevels[lvlIndex].enemies = [ {x:1320,y:328,w:40,h:48,vx:0.8,range:[1200,1400],hp:6,maxHp:6,type:'patrol',color:'#8b2b2b'}, {x:2140,y:268,w:40,h:48,vx:1.0,range:[2100,2300],hp:8,maxHp:8,type:'cautious',color:'#2b79a3'} ];
+}
+// final boss remains
+detailedLevels[detailedLevels.length - 1].boss = { x: 2350, y: 220, w: 120, h: 160, hp: 160, maxHp: 160, vx: 0.6, range: [2200, 2550], attackTimer:0 };
+
+// ---------- helpers ----------
+function showMenu(){ document.getElementById('menu').style.display='flex'; state='menu'; updateHUD(); }
+function hideMenu(){ document.getElementById('menu').style.display='none'; }
+function showShop(){ document.getElementById('shop').style.display='flex'; state='shop'; updateHUD(); }
+function hideShop(){ document.getElementById('shop').style.display='none'; }
+function showEnd(title,text){ document.getElementById('endTitle').textContent=title; document.getElementById('endText').textContent=text; document.getElementById('endPanel').style.display='flex'; state='end'; }
+function hideEnd(){ document.getElementById('endPanel').style.display='none'; }
+function updateHUD(){ document.getElementById('lives').textContent = lives; document.getElementById('score').textContent = score; document.getElementById('coins').textContent = coins; document.getElementById('ammo').textContent = ammo; document.getElementById('level').textContent = Math.min(currentLevel+1, detailedLevels.length); document.getElementById('season').textContent = currentSeason; document.getElementById('weapon').textContent = WEAPONS[currentWeapon].name; }
+
+document.getElementById('startBtn').addEventListener('click', ()=> startGame());
+document.getElementById('instrBtn').addEventListener('click', ()=>{ const p = document.getElementById('instrPanel'); p.style.display = p.style.display === 'none' ? 'block' : 'none'; });
+
+document.getElementById('skipShop').addEventListener('click', ()=>{ hideShop(); if(currentLevel < detailedLevels.length - 1) loadLevel(currentLevel + 1); else showEnd('🎉 You beat the game!', 'Final Score: ' + score); });
+document.getElementById('continueBtn').addEventListener('click', ()=>{ hideShop(); if(currentLevel < detailedLevels.length - 1) loadLevel(currentLevel + 1); else showEnd('🎉 You beat the game!', 'Final Score: ' + score); });
+
+// shop buys
+const buyLifeBtn = document.querySelector('[data-action="buyLife"]'); if(buyLifeBtn) buyLifeBtn.addEventListener('click', ()=>{ if(coins >= 100){ coins -= 100; lives += 1; updateHUD(); } });
+const buyAmmoBtn = document.querySelector('[data-action="buyAmmo"]'); if(buyAmmoBtn) buyAmmoBtn.addEventListener('click', ()=>{ if(coins >= 20){ coins -= 20; ammo += 5; updateHUD(); } });
+const buyShieldBtn = document.querySelector('[data-action="buyShield"]'); if(buyShieldBtn) buyShieldBtn.addEventListener('click', ()=>{ if(coins >= 200){ coins -= 200; shieldEnd = Date.now() + 10000; invulnerable = true; updateHUD(); } });
+const buyRapidBtn = document.querySelector('[data-action="buyRapid"]'); if(buyRapidBtn) buyRapidBtn.addEventListener('click
